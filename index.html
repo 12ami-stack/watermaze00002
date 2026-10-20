@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aqua Slider - 水流ジェット迷路</title>
+<style>
+:root{color-scheme:dark;--bg:#050b14;--glow:#00d2ff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0;background:var(--bg);color:#fff}
+body{font-family:'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+h1{margin:8px 0 4px;font-size:2rem;font-weight:300;letter-spacing:4px;text-transform:uppercase;background:linear-gradient(90deg,var(--glow),#fff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.description{font-size:.9rem;color:#8a9eb5;margin-bottom:12px;text-align:center;padding:0 12px}
+button{background:transparent;border:1px solid var(--glow);color:var(--glow);padding:8px 20px;font-size:1rem;cursor:pointer;border-radius:4px;transition:all .3s}
+button:hover{background:var(--glow);color:var(--bg);box-shadow:0 0 15px var(--glow)}
+.controls{display:flex;gap:10px;margin-bottom:14px}
+#game-container{position:relative;box-shadow:0 0 30px rgba(0,0,0,.8),0 0 50px rgba(0,136,255,.2);border-radius:8px;overflow:hidden;background:#08101c;max-width:100%}
+canvas{display:block;max-width:100%;height:auto}
+#clear-message{display:none;position:absolute;inset:0;background:rgba(5,11,20,.85);backdrop-filter:blur(4px);flex-direction:column;align-items:center;justify-content:center;z-index:10}
+#clear-message h2{font-size:3rem;color:var(--glow);margin:0 0 20px;letter-spacing:2px;text-shadow:0 0 20px var(--glow)}
+.pad{display:flex;gap:16px;margin-top:14px}
+.sliders{position:fixed;top:50%;right:max(16px,env(safe-area-inset-right,0px));transform:translateY(-50%);width:220px;box-sizing:border-box;padding:18px 18px 20px;display:grid;gap:18px;font-size:.85rem;color:#8a9eb5;background:linear-gradient(160deg,rgba(20,38,64,.72),rgba(8,16,30,.72));border:1px solid rgba(0,210,255,.25);border-radius:16px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 10px 40px rgba(0,0,0,.55),0 0 30px rgba(0,136,255,.15),inset 0 1px 0 rgba(255,255,255,.08)}
+.sliders h3{margin:0;font-size:.75rem;font-weight:600;letter-spacing:3px;color:var(--glow);text-transform:uppercase}
+.sliders label{display:grid;grid-template-columns:1fr auto;align-items:center;row-gap:10px}
+.sliders output{grid-column:2;grid-row:1;color:#fff;font-variant-numeric:tabular-nums;background:rgba(0,210,255,.12);border:1px solid rgba(0,210,255,.3);border-radius:6px;padding:1px 8px;font-size:.8rem}
+.sliders input{grid-column:1/-1;grid-row:2;-webkit-appearance:none;appearance:none;width:100%;height:4px;margin:0;border-radius:2px;background:linear-gradient(90deg,#0088ff,#00d2ff);outline:none;opacity:.85}
+.sliders input:hover{opacity:1}
+.sliders input::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid var(--glow);box-shadow:0 0 10px var(--glow);cursor:pointer}
+.sliders input::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--glow);box-shadow:0 0 10px var(--glow);cursor:pointer}
+@media(max-width:1060px){.sliders{position:static;transform:none;margin:14px 12px 8px;width:min(340px,calc(100% - 24px))}}
+.pad button{width:96px;height:56px;font-size:1.6rem;padding:0}
+</style>
+</head>
+<body>
+<h1>Aqua Slider</h1>
+<div class="description">水流で常に下へ流されます。←→で移動し、ジェット水流で上昇。左上から右下のゴール（緑の星）へ！</div>
+<div class="controls"><button onclick="initGame()">迷路を再生成</button><button onclick="restart()">やり直し (R)</button></div>
+<div id="game-container">
+  <canvas id="c"></canvas>
+  <div id="clear-message"><h2>STAGE CLEAR!</h2><button onclick="initGame()">次へ挑戦</button></div>
+</div>
+<div class="pad"><button id="bl">◀</button><button id="br">▶</button></div>
+<div class="sliders">
+  <h3>Settings</h3>
+  <label>落下速度<input type="range" id="sFlow" min="0.5" max="5" step="0.1" value="1.6"><output></output></label>
+  <label>ジェット上昇速度<input type="range" id="sJet" min="1" max="10" step="0.1" value="4.2"><output></output></label>
+</div>
+
+<script>
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d'),msg=document.getElementById('clear-message');
+let FLOW=1.6,JET=-4.2;
+const BASE=3.5,FLOW0=1.6,JETMAX=10;
+const COLS=21,ROWS=21,S=28,HW=0.3,HH=0.3;
+let maze,jet,p,cleared,last,raf,t=0;
+const keys={left:false,right:false};
+const rnd=n=>Math.floor(Math.random()*n);
+const goal={x:COLS-2,y:ROWS-2};
+
+function carve(){
+  maze=Array.from({length:ROWS},()=>Array(COLS).fill(1));
+  const st=[{x:1,y:1}];maze[1][1]=0;
+  const D=[[0,-2],[2,0],[0,2],[-2,0]];
+  while(st.length){
+    const c=st[st.length-1],o=D.filter(([dx,dy])=>{const nx=c.x+dx,ny=c.y+dy;return nx>0&&nx<COLS-1&&ny>0&&ny<ROWS-1&&maze[ny][nx]===1});
+    if(o.length){const [dx,dy]=o[rnd(o.length)];maze[c.y+dy/2][c.x+dx/2]=0;maze[c.y+dy][c.x+dx]=0;st.push({x:c.x+dx,y:c.y+dy});}
+    else st.pop();
+  }
+}
+function solve(){
+  const prev=new Map(),key=(x,y)=>y*COLS+x,q=[[1,1]];prev.set(key(1,1),null);
+  for(let i=0;i<q.length;i++){
+    const [x,y]=q[i];
+    for(const [dx,dy] of [[0,-1],[1,0],[0,1],[-1,0]]){
+      const nx=x+dx,ny=y+dy;
+      if(maze[ny]&&maze[ny][nx]===0&&!prev.has(key(nx,ny))){prev.set(key(nx,ny),[x,y]);q.push([nx,ny]);}
+    }
+  }
+  const path=[];let c=[goal.x,goal.y];
+  while(c){path.push(c);c=prev.get(key(c[0],c[1]));}
+  return path.reverse();
+}
+function generate(){
+  let path,ups=0;
+  for(let n=0;n<300&&ups<6;n++){
+    carve();path=solve();ups=0;
+    for(let i=1;i<path.length;i++)if(path[i][1]<path[i-1][1])ups++;
+  }
+  // 正解ルートの「上り」部分にだけジェット水流を設置
+  jet=Array.from({length:ROWS},()=>Array(COLS).fill(false));
+  for(let i=1;i<path.length;i++){
+    const a=path[i-1],b=path[i];
+    if(b[1]<a[1]){jet[a[1]][a[0]]=true;jet[b[1]][b[0]]=true;}
+  }
+}
+
+const solid=(c,r)=>c<0||r<0||c>=COLS||r>=ROWS||maze[r][c]===1;
+function blocked(x,y){
+  for(const dx of[-HW,HW])for(const dy of[-HH,HH])if(solid(Math.floor(x+dx),Math.floor(y+dy)))return true;
+  return false;
+}
+const isJet=(c,r)=>!!(jet[r]&&jet[r][c]);
+
+function step(dt){
+  const dir=(keys.right?1:0)-(keys.left?1:0);
+  const cx=Math.floor(p.x),cy=Math.floor(p.y),j=isJet(cx,cy);
+  const inConn=cy%2===0&&cx%2===1&&!solid(cx,cy);   // 縦の通路内は中央に寄せる
+  if(inConn||(j&&(dir===0||-JET>=JETMAX))){
+    p.x+=(cx+.5-p.x)*Math.min(1,12*dt);p.vx=0;
+  }else{
+    if(dir===0&&cx%2===1){ // 下に穴があれば中央へ吸い込まれる
+      const r2=Math.floor(p.y+HH+.05);
+      if(!solid(cx,r2)&&r2%2===0)p.x+=(cx+.5-p.x)*Math.min(1,8*dt);
+    }
+    p.vx+=(dir*BASE*(j?Math.max(0,1+JET/JETMAX):FLOW0/FLOW)-p.vx)*Math.min(1,12*dt);
+    const nx=p.x+p.vx*dt;
+    if(!blocked(nx,p.y))p.x=nx;
+    else if(!blocked(nx,p.y-.2)){p.x=nx;p.y-=.2;}
+    else p.vx=0;
+  }
+  let target=FLOW;
+  if(j){const top=!isJet(cx,cy-1);target=(top&&p.y<cy+.4)?FLOW:JET;}
+  p.vy+=(target-p.vy)*Math.min(1,6*dt);
+  const ny=p.y+p.vy*dt;
+  if(!blocked(p.x,ny))p.y=ny;else p.vy=0;
+  if(Math.hypot(p.x-(goal.x+.5),p.y-(goal.y+.5))<.5){cleared=true;setTimeout(()=>msg.style.display='flex',300);}
+}
+
+function star(cx,cy,R,rot){
+  ctx.beginPath();
+  for(let i=0;i<10;i++){const a=rot+i*Math.PI/5-Math.PI/2,r=i%2?R*.45:R;ctx[i?'lineTo':'moveTo'](cx+Math.cos(a)*r,cy+Math.sin(a)*r);}
+  ctx.closePath();
+}
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    if(maze[r][c])continue;
+    const x=c*S,y=r*S;
+    ctx.fillStyle='#06152d';ctx.fillRect(x,y,S,S);
+    if(jet[r][c]){
+      const g=ctx.createLinearGradient(0,y+S,0,y);
+      g.addColorStop(0,'rgba(0,210,255,.5)');g.addColorStop(1,'rgba(0,210,255,.2)');
+      ctx.fillStyle=g;ctx.fillRect(x,y,S,S);
+      ctx.strokeStyle='rgba(190,248,255,.8)';ctx.lineWidth=2;
+      for(let k=0;k<3;k++){
+        const off=(t*110+k*9+c*5+r*11)%S,lx=x+5+k*9;
+        ctx.beginPath();ctx.moveTo(lx,y+S-off);ctx.lineTo(lx,y+Math.max(0,S-off-9));ctx.stroke();
+      }
+    }else{
+      ctx.strokeStyle='rgba(0,136,255,.2)';ctx.lineWidth=2;
+      for(let k=0;k<2;k++){
+        const off=(t*30+c*7+r*3+k*14)%S,lx=x+8+k*12;
+        ctx.beginPath();ctx.moveTo(lx,y+off);ctx.lineTo(lx,y+Math.min(S,off+8));ctx.stroke();
+      }
+    }
+  }
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    if(!maze[r][c])continue;
+    ctx.fillStyle='#1a2636';ctx.fillRect(c*S+1,r*S+1,S-2,S-2);
+    ctx.strokeStyle='#2c425c';ctx.lineWidth=1;ctx.strokeRect(c*S+1,r*S+1,S-2,S-2);
+  }
+  ctx.shadowBlur=14+5*Math.sin(t*4);ctx.shadowColor='#00e676';ctx.fillStyle='#00e676';
+  star((goal.x+.5)*S,(goal.y+.5)*S,S*.42,t*1.2);ctx.fill();
+  ctx.shadowBlur=15;ctx.shadowColor='#ffaa00';ctx.fillStyle='#ffea00';
+  ctx.beginPath();ctx.roundRect((p.x-HW)*S,(p.y-HH)*S,2*HW*S,2*HH*S,5);ctx.fill();
+  ctx.shadowBlur=0;
+}
+function loop(ts){
+  const dt=Math.min(.033,(ts-last)/1000||0);last=ts;t+=dt;
+  if(!cleared)step(dt);
+  draw();raf=requestAnimationFrame(loop);
+}
+function restart(){p={x:1.5,y:1.5,vx:0,vy:0};cleared=false;msg.style.display='none';}
+function initGame(){
+  cancelAnimationFrame(raf);
+  canvas.width=COLS*S;canvas.height=ROWS*S;
+  generate();restart();last=performance.now();raf=requestAnimationFrame(loop);
+}
+const map={ArrowLeft:'left',a:'left',A:'left',ArrowRight:'right',d:'right',D:'right'};
+addEventListener('keydown',e=>{
+  if(map[e.key]){keys[map[e.key]]=true;e.preventDefault();}
+  else if(e.key==='Enter'&&cleared){e.preventDefault();initGame();}
+  else if(e.key==='r'||e.key==='R')restart();
+  else if(e.key.startsWith('Arrow'))e.preventDefault();
+});
+addEventListener('keyup',e=>{if(map[e.key])keys[map[e.key]]=false;});
+[['bl','left'],['br','right']].forEach(([id,k])=>{
+  const b=document.getElementById(id);
+  b.addEventListener('pointerdown',e=>{keys[k]=true;e.preventDefault();});
+  ['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>keys[k]=false));
+});
+[['sFlow',v=>FLOW=v],['sJet',v=>JET=-v]].forEach(([id,fn])=>{
+  const el=document.getElementById(id),out=el.nextElementSibling;
+  const apply=()=>{fn(parseFloat(el.value));out.textContent=parseFloat(el.value).toFixed(1);};
+  el.addEventListener('input',apply);
+  el.addEventListener('change',()=>el.blur());
+  apply();
+});
+initGame();
+</script>
+</body>
+</html>
